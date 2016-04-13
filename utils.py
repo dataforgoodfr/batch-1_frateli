@@ -7,9 +7,12 @@ Created on Wed Apr 13 16:51:30 2016
 
 import numpy as np
 from scipy import interp
+from scipy.stats import sem
+import operator
 
 from sklearn import metrics
 from sklearn.cross_validation import StratifiedKFold
+from sklearn.grid_search import GridSearchCV
 
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -110,3 +113,51 @@ def get_roc_curve_cv(model, X, y):
     plt.title('ROC curves with 5 CV')
     plt.legend(loc="lower right")
     plt.show()
+    
+def display_scores(params, scores, append_star=False):
+    """Format the mean score +/- std error for params"""
+    params = ", ".join("{0}={1}".format(k, v)
+                      for k, v in params.items())
+    line = "{0}:\t{1:.3f} (+/-{2:.3f})".format(
+        params, np.mean(scores), sem(scores))
+    if append_star:
+        line += " *"
+    return line
+
+def display_grid_scores(grid_scores, top=None):
+    """Helper function to format a report on a grid of scores"""
+    
+    grid_scores = sorted(grid_scores, key=lambda x: x[1], reverse=True)
+    if top is not None:
+        grid_scores = grid_scores[:top]
+        
+    # Compute a threshold for staring models with overlapping
+    # stderr:
+    _, best_mean, best_scores = grid_scores[0]
+    threshold = best_mean - 2 * sem(best_scores)
+    
+    for params, mean_score, scores in grid_scores:
+        append_star = mean_score + 2 * sem(scores) > threshold
+        print(display_scores(params, scores, append_star=append_star))
+        
+        
+def get_grid(model, X, y):
+    parameters = [{'C': [0.1, 1, 10,], 
+              'solver' : ['sag']}, #,
+              {'C': [0.1, 1, 10,], 
+              'solver' : ['lbfgs']},
+              {'C': [0.1, 1, 10,], 
+              'solver' : ['liblinear']}]
+
+    clf = GridSearchCV(model, parameters,
+                       cv=5,
+                       verbose=2, refit=True,scoring='roc_auc')
+    
+    clf.fit(X, y)
+    
+    best_parameters, score, _ = max(clf.grid_scores_, key=lambda x: x[1])
+    print('Raw AUC score:', score)
+    for param_name in sorted(best_parameters.keys()):
+        print("%s: %r" % (param_name, best_parameters[param_name]))      
+    
+    display_grid_scores(clf.grid_scores_, top=20)

@@ -83,7 +83,11 @@ def process_data(data):
     
     ####
     # others features
-    features.append("Niveau")  # Bac +1, Bac + 3 etc
+    features.append("Niveau")  # Filleul Bac +1, Bac + 3 etc
+    features.append(u"Niveau diplôme") # Parrain  Bac +1, Bac + 3                 # No improve
+#    features.append("Mention au bac") # Filleul Bien, Trèes bien, Passable ...   # No improve
+    # To do même niveau étude
+
     
     return data[features], features, continus_features 
             
@@ -153,7 +157,7 @@ for train_index, test_index in skf:
 
 
 
-model = LogisticRegression(class_weight='balanced')
+model = LogisticRegression(class_weight='balanced', C=10, solver='lbfgs')
 
 model.fit(X_train, y_train)
 
