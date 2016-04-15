@@ -8,8 +8,11 @@ Created on Wed Apr 13 15:48:06 2016
 
 import pandas as pd
 import numpy as np
+import math
 
-from sklearn.preprocessing import scale, Imputer
+from sklearn.preprocessing import scale, Imputer, LabelEncoder, StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
 from sklearn.cross_validation import StratifiedShuffleSplit
 from sklearn.linear_model import LogisticRegression
 
@@ -18,11 +21,23 @@ from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 import nltk.stem
 
-from utils import get_metric
+from utils import get_metric, get_roc_curve_cv
 
 stem = nltk.stem.snowball.FrenchStemmer(ignore_stopwords=True)
 
 stop = [word for word in stopwords.words('french')]
+
+# To map niveau d'étude :
+map_niveau = {"Bac +3" : 3,
+                "Bac +2" : 2,
+                "Bac +4" : 4,
+                "Bac +1" : 1,
+                "Bac +5" : 5,
+                "Bac +6" : 6,
+                "1er emploi" : 0,
+                "Bac +7" : 7,
+                u"Bac +8 et au-del\xe0" : 8,
+                "Terminale" : 0}
 
 
 def process_data(data):
@@ -42,6 +57,9 @@ def process_data(data):
     
     ## Age du Filleul
     data['age_p'] = pd.datetime.now().year - pd.to_datetime(data["Date de naissance_p"], errors='coerce').dt.year
+    # col age_p have some NaN
+    imp = Imputer(strategy='median', axis=1)
+    data["age_p"] = pd.Series(imp.fit_transform(data["age_p"])[0])
     
     features.append("age_p")
     continus_features.append("age_p")
@@ -81,15 +99,105 @@ def process_data(data):
     data.loc[(data["projet_f_activite_p_egal"] == 1) | (data["projet_f_activite_pre_p_egal"] == 1), 'projet_f_activite_p_egal_all'] = 1
     features.append("projet_f_activite_p_egal_all")
     
+    ## Analyse similitude de niveau d'étude (différence)
+    # Filleul
+    data["Niveau_num"] = data["Niveau"].apply(lambda x: map_niveau.get(x))
+    # Parrain
+    data[u"Niveau_diplome_num"] = data[u"Niveau diplôme"].apply(lambda x: map_niveau.get(x, -1)) # if Nan -> -1
+    
+    # Comparaison niveau Parrain / filleul
+    data["niveau_etude_egal"] = data.apply(lambda row: 1 if row[u"Niveau diplôme"] == row[u"Niveau"] else 0, axis=1)
+    features.append("niveau_etude_egal")
+    
+    # Différence de niveau Parrain / filluel    
+    data["diff_niveau_etude_num"] = data["Niveau_num"] - data[u"Niveau_diplome_num"]
+    features.append("diff_niveau_etude_num")
+    continus_features.append("diff_niveau_etude_num")
+    
+    
+    ############## CLUSTER #################
+    
+    ## Clustering des filleuls
+    #
+    features_f = ["Sexe", "group_formation_f", "Niveau_num", "Code formation_f" ,
+                  "age_f", u"Nombre de frères et soeurs"]                  
+    features_f_continus = ["Niveau_num", "age_f", u"Nombre de frères et soeurs"]
+    
+    filleul = data[features_f].copy()
+    
+    # If no value then "Nombre de frères et soeurs" = 0
+    filleul.loc[pd.isnull(filleul[u"Nombre de frères et soeurs"]), u"Nombre de frères et soeurs"] = 0
+    for col_continus in features_f_continus:
+        scaler = StandardScaler()
+        filleul[col_continus] = scaler.fit_transform(filleul[col_continus].values)
+        
+    filleul_dummy = pd.get_dummies(filleul)
+    filleul_cluster = get_kmean_cluster(filleul_dummy.values, 5, 9)
+    
+    data['cluster_filleul'] = filleul_cluster
+    features.append('cluster_filleul')
+    
+    ## Clustering des parrains
+    #
+    features_p = ["H/F", "group_formation_p", "Niveau_diplome_num", "Code formation_p" ,
+              "age_p", u"Secteur d'activité", "Fonction actuelle", u"A d\xe9j\xe0\xa0eu un parrainage annul\xe9 ?",
+             "Temporairement indisponible"]
+            # Niveau autre formation
+    features_p_continus = ["Niveau_diplome_num", "age_p"]
+    
+    parrain = data[features_p].copy()
+    
+    for col_continus in features_p_continus:
+        scaler = StandardScaler()
+        parrain[col_continus] = scaler.fit_transform(parrain[col_continus].values)
+    
+    parrain_dummy = pd.get_dummies(parrain)
+    parrain_cluster = get_kmean_cluster(parrain_dummy.values, 4, 0.95)
+    data['cluster_parrain'] = parrain_cluster
+    features.append('cluster_parrain')
+    
+        
     ####
     # others features
     features.append("Niveau")  # Filleul Bac +1, Bac + 3 etc
-    features.append(u"Niveau diplôme") # Parrain  Bac +1, Bac + 3                 # No improve
+#    features.append(u"Niveau diplôme") # Parrain  Bac +1, Bac + 3                 # No improve
 #    features.append("Mention au bac") # Filleul Bien, Trèes bien, Passable ...   # No improve
-    # To do même niveau étude
-
     
-    return data[features], features, continus_features 
+    # TO DO 
+#     - Distance :
+#    data['distance'] = data.apply(lambda row: distance(row.lat_p, row.lon_p, row.lat_f, row.lon_f), axis=1)
+#    Check pourquoi des lon / lat sont vide
+    
+    return data[features], features, continus_features
+    
+
+def distance(lat1, lon1, lat2, lon2):
+#    lat1, lon1 = origin
+#    lat2, lon2 = destination
+    radius = 6371 # km
+
+    dlat = math.radians(lat2-lat1)
+    dlon = math.radians(lon2-lon1)
+    a = math.sin(dlat/2) * math.sin(dlat/2) + math.cos(math.radians(lat1)) \
+        * math.cos(math.radians(lat2)) * math.sin(dlon/2) * math.sin(dlon/2)
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    d = radius * c
+
+    return d
+    
+def get_kmean_cluster(X, n_cluster, n_pca):
+    """
+    Try to clustering with PCA / Kmean
+    X : value to cluster
+    n_cluster : number of cluster you want
+    n_pca : Percent or number of pca you want
+    Return the list of cluster
+    """
+    pca = PCA(n_components=n_pca).fit(X)
+    X_pca = pca.transform(X)
+    k_means = KMeans(init='k-means++', n_clusters=n_cluster).fit(X_pca)
+    return k_means.labels_
+
             
 
 def group_formation(x):
@@ -130,8 +238,26 @@ def get_similitude_projet_activite(projet, activite):
 print "Read data..."
 data = pd.read_csv('data/data.csv', encoding='utf-8')
 
-y = data.target
+y = data.target #Binary
+#y = data["Evaluation parrainage"] #Multiclass
 
+print "Read city file..."
+ville = pd.read_csv('data/correspondance-code-insee-code-postal.csv', sep=";")
+ville = ville[["Code Postal", "geo_point_2d"]]
+
+ville['lat'] = ville.geo_point_2d.apply(lambda x: float(x.split(",")[0]))
+ville['lon'] = ville.geo_point_2d.apply(lambda x: float(x.split(", ")[1]))
+
+ville = ville[["Code Postal", 'lat', 'lon']]
+
+# Drop duplicated row on Code Postal
+ville = ville.drop_duplicates(subset=['Code Postal'])
+
+print "Merging with city file..."
+# Parrain geo
+data = pd.merge(data, ville, how='left', left_on=['Code postal actuel'], right_on=['Code Postal'])
+# Filleul geo
+data = pd.merge(data, ville, how='left', left_on=['Code postal'], right_on=['Code Postal'], suffixes=('_p', '_f'))
 my_data, features, continus_features = process_data(data)
 
 
@@ -158,12 +284,15 @@ for train_index, test_index in skf:
 
 
 model = LogisticRegression(class_weight='balanced', C=10, solver='lbfgs')
+#model = LogisticRegression()
 
 model.fit(X_train, y_train)
 
 y_pred = model.predict(X_test)
 
-get_metric(y_test, y_pred, plot=True)
+get_metric(y_test, y_pred, plot=False)
+
+get_roc_curve_cv(model, my_data, y)
 
 result = pd.DataFrame(y_test)
 result.columns = ["y_test"]
