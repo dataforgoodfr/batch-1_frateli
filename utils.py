@@ -65,10 +65,10 @@ def get_metric(y_test, y_pred, plot=False):
         plt.title('confusion matrix')
         plt.xlabel('Predicted label')
         plt.ylabel('True label')
-        plt.xticks(tick_marks + 0.5, list(label_unique))
-        plt.yticks(tick_marks + 0.5, list(reversed(list(label_unique))), rotation=0)
+        plt.xticks(tick_marks + 0.5, list(reversed(list(label_unique))))
+        plt.yticks(tick_marks + 0.5,list(label_unique) , rotation=0)
 
-def get_roc_curve_cv(model, X, y):
+def get_roc_curve_cv(model, X, y,n_folds=5):
     """
     Create graph with ROC curve with cross validation cv : 5
     If model is from Sklearn, the model is fit at each cv
@@ -79,7 +79,7 @@ def get_roc_curve_cv(model, X, y):
     
     """    
     
-    cv = StratifiedKFold(y, n_folds=5)
+    cv = StratifiedKFold(y, n_folds=n_folds)
 
     mean_tpr = 0.0
     mean_fpr = np.linspace(0, 1, 100)
@@ -110,7 +110,7 @@ def get_roc_curve_cv(model, X, y):
     plt.ylim([-0.05, 1.05])
     plt.xlabel('False Positive Rate')
     plt.ylabel('True Positive Rate')
-    plt.title('ROC curves with 5 CV')
+    plt.title('ROC curves with '+str(n_folds)+' CV')
     plt.legend(loc="lower right")
     plt.show()
     
