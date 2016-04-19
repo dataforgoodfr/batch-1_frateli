@@ -114,6 +114,11 @@ def process_data(data):
     features.append("diff_niveau_etude_num")
     continus_features.append("diff_niveau_etude_num")
     
+    # Distance CP Parains / Filleuls
+    data['distance'] = data.apply(lambda row: distance(row.lat_p, row.lon_p, row.lat_f, row.lon_f), axis=1)
+    features.append("distance")
+    continus_features.append("distance")
+    
     
     ############## CLUSTER #################
     
@@ -135,6 +140,7 @@ def process_data(data):
     filleul_cluster = get_kmean_cluster(filleul_dummy.values, 5, 9)
     
     data['cluster_filleul'] = filleul_cluster
+    data['cluster_filleul'] = data['cluster_filleul'].astype('str')
     features.append('cluster_filleul')
     
     ## Clustering des parrains
@@ -154,6 +160,7 @@ def process_data(data):
     parrain_dummy = pd.get_dummies(parrain)
     parrain_cluster = get_kmean_cluster(parrain_dummy.values, 4, 0.95)
     data['cluster_parrain'] = parrain_cluster
+    data['cluster_parrain'] = data['cluster_parrain'].astype('str')
     features.append('cluster_parrain')
     
         
@@ -163,12 +170,22 @@ def process_data(data):
 #    features.append(u"Niveau diplôme") # Parrain  Bac +1, Bac + 3                 # No improve
 #    features.append("Mention au bac") # Filleul Bien, Trèes bien, Passable ...   # No improve
     
-    # TO DO 
-#     - Distance :
-#    data['distance'] = data.apply(lambda row: distance(row.lat_p, row.lon_p, row.lat_f, row.lon_f), axis=1)
-#    Check pourquoi des lon / lat sont vide
     
-    return data[features], features, continus_features
+    # Drop row with nan value
+    features.append('target')
+    data = data[features].dropna()
+    
+    # Target
+    y = data.target #Binary
+    #y = data["Evaluation parrainage"] #Multiclass
+    features.remove('target')
+    
+    # To set manually features
+#    print "Manually set features"
+#    features = ['age_f', 'cluster_filleul', 'code_formation_egal', 'formation_egal', 'projet_f_activite_p_egal']
+#    continus_features = ['age_f']
+    
+    return data[features], features, continus_features, y
     
 
 def distance(lat1, lon1, lat2, lon2):
@@ -238,9 +255,6 @@ def get_similitude_projet_activite(projet, activite):
 print "Read data..."
 data = pd.read_csv('data/data.csv', encoding='utf-8')
 
-y = data.target #Binary
-#y = data["Evaluation parrainage"] #Multiclass
-
 print "Read city file..."
 ville = pd.read_csv('data/correspondance-code-insee-code-postal.csv', sep=";")
 ville = ville[["Code Postal", "geo_point_2d"]]
@@ -250,28 +264,63 @@ ville['lon'] = ville.geo_point_2d.apply(lambda x: float(x.split(", ")[1]))
 
 ville = ville[["Code Postal", 'lat', 'lon']]
 
+# Some citys have multiple Code psotal 
+fix_cp_list = []
+for idx, row in ville.iterrows():
+    if "/" in row['Code Postal']:
+        for cp in row['Code Postal'].split("/"):
+            fix_cp_list.append({'Code Postal' : cp,
+                                'lat' : row['lat'],
+                                'lon' : row['lon']})
+fix_cp_df = pd.DataFrame(fix_cp_list)
+print "Adding %s rows to city dataset" %(str(len(fix_cp_df)))
+frames = [ville, fix_cp_df]
+ville = pd.concat(frames)
+
+# Manuel fix
+fix_manual_city = []
+fix_manual_city.append({'Code Postal' : '75116', # 16 arrondissement Paris (2 CP)
+                        'lat' : 48.860399,
+                        'lon' : 2.2621})
+fix_manual_city_df = pd.DataFrame(fix_manual_city)                        
+                        
+frames2 = [ville, fix_manual_city_df]
+ville = pd.concat(frames2)
+
 # Drop duplicated row on Code Postal
 ville = ville.drop_duplicates(subset=['Code Postal'])
+
+# Analyse cp with no match
+cp_list = data["Code postal"].unique().tolist()
+cp_list.extend(data["Code postal actuel"].unique().tolist())
+cp_list = set(cp_list)
+error_cp = [cp for cp in cp_list if cp not in ville["Code Postal"].unique().tolist()]
 
 print "Merging with city file..."
 # Parrain geo
 data = pd.merge(data, ville, how='left', left_on=['Code postal actuel'], right_on=['Code Postal'])
 # Filleul geo
 data = pd.merge(data, ville, how='left', left_on=['Code postal'], right_on=['Code Postal'], suffixes=('_p', '_f'))
-my_data, features, continus_features = process_data(data)
+
+print "Process data..."
+my_data, features, continus_features, y = process_data(data)
 
 
-print "Imput missing value..."
-# col age_p have some NaN
-imp = Imputer(strategy='median', axis=1)
-my_data["age_p"] = pd.Series(imp.fit_transform(my_data["age_p"])[0])
+#print "Imput missing value..."
+## col age_p have some NaN
+#imp = Imputer(strategy='median', axis=1)
+#my_data["age_p"] = pd.Series(imp.fit_transform(my_data["age_p"])[0])
+#
+## TO DO change outlier value from age_p
+#imp = Imputer(strategy='median', axis=1)
+#my_data["distance"] = pd.Series(imp.fit_transform(my_data["distance"])[0])
 
-# TO DO change outlier value from age_p
 
 print "Scaling..."
 for continus_col in continus_features:
         my_data[continus_col] = scale(my_data[continus_col])
         
+data_save = my_data.copy()        
 my_data = pd.get_dummies(my_data)
 
 print "Spliting Dataset..."
@@ -300,6 +349,21 @@ result["y_pred"] = y_pred
 
 
 
+# To fit model with all feature one by one and check CV score :
+from sklearn.cross_validation import cross_val_score
+score_features = []
+for feature in features:
+    temp_data = data_save[feature].copy()
+    temp_data = pd.get_dummies(temp_data)
+    
+    score = cross_val_score(model, temp_data, y=y, scoring='roc_auc', cv=5)
+    score_features.append({'col' : feature,
+                        'score': score.mean()})
+                        
+df_features = pd.DataFrame(score_features)    
+df_features.sort_values('score', ascending=0, inplace=True)                
+#sns.barplot(x='col', y='score', data=df_features)
+#plt.xticks(range(len(df_features.col)), df_features.col, rotation=75)
 
 
 
