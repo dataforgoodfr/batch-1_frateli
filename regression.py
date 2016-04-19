@@ -57,6 +57,9 @@ def process_data(data):
     
     ## Age du Filleul
     data['age_p'] = pd.datetime.now().year - pd.to_datetime(data["Date de naissance_p"], errors='coerce').dt.year
+    # Some outlier detection
+    data.loc[data['age_p'] >= (data['age_p'].mean() + 3 * data['age_p'].std()), 'age_p'] = np.nan
+    data.loc[data['age_p'] <= (data['age_p'].mean() - 3 * data['age_p'].std()), 'age_p'] = np.nan
     # col age_p have some NaN
     imp = Imputer(strategy='median', axis=1)
     data["age_p"] = pd.Series(imp.fit_transform(data["age_p"])[0])
@@ -99,7 +102,7 @@ def process_data(data):
     data.loc[(data["projet_f_activite_p_egal"] == 1) | (data["projet_f_activite_pre_p_egal"] == 1), 'projet_f_activite_p_egal_all'] = 1
     features.append("projet_f_activite_p_egal_all")
     
-    ## Analyse similitude de niveau d'étude (différence)
+    ## Analyse similitude de niveau d'étude (différence)group_formation
     # Filleul
     data["Niveau_num"] = data["Niveau"].apply(lambda x: map_niveau.get(x))
     # Parrain
@@ -221,14 +224,17 @@ def group_formation(x):
     """
     To group formation
     """
-    if "ecole" in x.lower():
-        return "ecole"
-    elif "universit" in x.lower():
-        return "universite"
-    elif "institut" in x.lower():
-        return "institut"
-    else:
-        return "autre"
+    try:
+        if "ecole" in x.lower():
+            return "ecole"
+        elif "universit" in x.lower():
+            return "universite"
+        elif "institut" in x.lower():
+            return "institut"
+        else:
+            return "autre"
+    except:
+        print x
         
 def get_similitude_projet_activite(projet, activite):
     """
