@@ -122,6 +122,14 @@ def process_data(data):
     features.append("distance")
     continus_features.append("distance")
     
+    # Binary for bourier sup or not for "Boursier de l'enseignement supérieur"
+    data["boursier_sup"] = data[u"Boursier de l'enseignement supérieur"].apply(lambda x: {'Non' : 0}.get(x, 1))
+#    features.append("boursier_sup")
+    
+    # Binary for bourier sup or not for "Boursier de l'enseignement supérieur"
+    # There are 84 missing value. We assume if missing then "Non" (no bourse)
+    data.loc[pd.isnull(data[u"Bousier de l'enseignement secondaire"]), u"Bousier de l'enseignement secondaire"] = "Non"
+#    features.append(u"Bousier de l'enseignement secondaire")
     
     ############## CLUSTER #################
     
@@ -326,7 +334,16 @@ print "Scaling..."
 for continus_col in continus_features:
         my_data[continus_col] = scale(my_data[continus_col])
         
-data_save = my_data.copy()        
+data_save = my_data.copy()
+my_data_encoded =  my_data.copy()
+# For tree model
+for col in my_data_encoded.columns:
+    if my_data_encoded[col].dtype=='object':
+        lbl = LabelEncoder()
+        my_data_encoded[col] = lbl.fit_transform(my_data_encoded[col])
+
+
+# For regress model 
 my_data = pd.get_dummies(my_data)
 
 print "Spliting Dataset..."
@@ -356,23 +373,48 @@ result["y_pred"] = y_pred
 
 
 # To fit model with all feature one by one and check CV score :
-from sklearn.cross_validation import cross_val_score
-score_features = []
-for feature in features:
-    temp_data = data_save[feature].copy()
-    temp_data = pd.get_dummies(temp_data)
-    
-    score = cross_val_score(model, temp_data, y=y, scoring='roc_auc', cv=5)
-    score_features.append({'col' : feature,
-                        'score': score.mean()})
-                        
-df_features = pd.DataFrame(score_features)    
-df_features.sort_values('score', ascending=0, inplace=True)                
+#from sklearn.cross_validation import cross_val_score
+#score_features = []
+#for feature in features:
+#    temp_data = data_save[feature].copy()
+#    temp_data = pd.get_dummies(temp_data)
+#    
+#    score = cross_val_score(model, temp_data, y=y, scoring='roc_auc', cv=5)
+#    score_features.append({'col' : feature,
+#                        'score': score.mean()})
+#                        
+#df_features = pd.DataFrame(score_features)    
+#df_features.sort_values('score', ascending=0, inplace=True)                
 #sns.barplot(x='col', y='score', data=df_features)
 #plt.xticks(range(len(df_features.col)), df_features.col, rotation=75)
 
 
+# Feature selection
+#from sklearn.feature_selection import RFECV
+#rfecv = RFECV(estimator=model, step=1, cv=5,
+#              scoring='roc_auc')
+#rfecv.fit(my_data, y)
+#plt.figure()
+#plt.xlabel("Number of features selected")
+#plt.ylabel("Cross validation score (nb of correct classifications)")
+#plt.plot(range(1, len(rfecv.grid_scores_) + 1), rfecv.grid_scores_)
+#plt.show()
+#
+#selected_features = my_data.columns[rfecv.get_support()]
 
+# Ensemble
+import xgboost as xgb
+from mlxtend.classifier import EnsembleVoteClassifier
+from sklearn.cross_validation import cross_val_score
 
+clf1 = LogisticRegression(class_weight='balanced', solver='newton-cg', C=100.0)
+clf2 = xgb.XGBClassifier(learning_rate=0.1, n_estimators=7, max_depth=8)
+clf3 = xgb.XGBClassifier(learning_rate=0.1, n_estimators=10, max_depth=6)
 
+eclf = EnsembleVoteClassifier(clfs=[clf1, clf2], voting='soft')
 
+for clf, label in zip([clf1, clf2, clf3, eclf], ['Logistic Newton', 'Xgb1', 'Xgb2', 'Ensemble']):
+
+    scores = cross_val_score(clf, my_data[selected_features], y, cv=5, scoring='roc_auc')
+    print("roc_auc: %0.4f (+/- %0.2f) [%s]" % (scores.mean(), scores.std(), label))
+# Result  : ensemble roc_auc: 0.7251 (+/- 0.04)
