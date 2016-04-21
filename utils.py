@@ -161,3 +161,62 @@ def get_grid(model, X, y):
         print("%s: %r" % (param_name, best_parameters[param_name]))      
     
     display_grid_scores(clf.grid_scores_, top=20)
+    
+    
+def get_best_logisitc(y):
+    
+  from mlxtend.feature_selection import SequentialFeatureSelector as SFS
+  from sklearn.cross_validation import StratifiedKFold
+  import pandas as pd
+  from sklearn.linear_model import LogisticRegression
+  from sklearn.cross_validation import cross_val_score
+  
+  my_data = pd.read_csv('data/my_data_test.csv', encoding='utf-8')
+  
+  y = my_data.target
+  my_data = my_data.drop('target', axis=1)
+  
+    
+  # To have better CV
+  skf = StratifiedKFold(y, n_folds=5, random_state=17, shuffle=False)
+
+  C_params = [0.01 , 1, 10, 50, 70, 100]
+  solvers = ['newton-cg', 'lbfgs', 'liblinear', 'sag']
+
+  my_result_list = []
+  for C_param in C_params:
+      for solver in solvers:
+          print "Looking for C : %s and solver : %s" % (C_param, solver)
+          model = LogisticRegression(class_weight='balanced', random_state=17, 
+                                     solver=solver, C=C_param)
+          sfs = SFS(model, 
+                    k_features=len(my_data.columns), 
+                    forward=True, 
+                    floating=False, 
+                    scoring='roc_auc',
+                    print_progress=False,
+                    cv=skf,
+                    n_jobs=-1)
+          
+          sfs = sfs.fit(my_data.values, y.values)
+
+          result_sfs = pd.DataFrame.from_dict(sfs.get_metric_dict()).T
+          result_sfs.sort_values('avg_score', ascending=0, inplace=True)
+          features_sfs = result_sfs.feature_idx.head(1).tolist()
+          select_features_sfs = list(my_data.columns[features_sfs])
+
+          scores = cross_val_score(model, my_data[select_features_sfs], y, cv=skf, scoring='roc_auc')
+          my_result_list.append({'C' : C_param,
+                               'solver' : solver,
+                               'auc' : scores.mean(),
+                               'std' : scores.std(),
+                               'best_columns' : select_features_sfs,
+                               'estimator' : model})
+
+  my_result = pd.DataFrame(my_result_list)
+  my_result.sort_values('auc', ascending=0, inplace=True)
+
+  best_features = my_result.best_columns.head(1).values[0]
+  best_model = my_result.estimator.head(1).values[0]
+
+  return best_features, best_model
