@@ -13,8 +13,8 @@ import math
 from sklearn.preprocessing import scale, Imputer, LabelEncoder, StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
-from sklearn.cross_validation import StratifiedShuffleSplit
-from sklearn.linear_model import LogisticRegression
+import xgboost as xgb
+from sklearn.cross_validation import cross_val_score
 
 
 from nltk.corpus import stopwords
@@ -343,78 +343,39 @@ for col in my_data_encoded.columns:
         my_data_encoded[col] = lbl.fit_transform(my_data_encoded[col])
 
 
-# For regress model 
+# For regress model (old Logistic Regress)
 my_data = pd.get_dummies(my_data)
 
-print "Spliting Dataset..."
-skf = StratifiedShuffleSplit(y, 2, test_size=0.25, random_state=17)
+# Features selection with a sequential feature algorithms :
+selected_features = [u'age_f',
+                     u'code_formation_egal',
+                     u'niveau_etude_egal',
+                     u'diff_niveau_etude_num',
+                     u'group_formation_p_autre',
+                     u'cluster_filleul_0',
+                     u'cluster_filleul_4',
+                     u'cluster_parrain_0',
+                     u'Niveau_1er emploi',
+                     u'Niveau_Bac +1',
+                     u'Niveau_Bac +2',
+                     u'Niveau_Bac +6',
+                     u'Niveau_Bac +7',
+                     u'Niveau_Terminale',
+                     u'Niveau dipl\xf4me_1er emploi',
+                     u'Niveau dipl\xf4me_Bac +1',
+                     u'Niveau dipl\xf4me_Bac +3',
+                     u'Niveau dipl\xf4me_Bac +8 et au-del\xe0',
+                     u'Mention au bac_En Terminale',
+                     u'Mention au bac_F\xe9licitations']
+# Model
+clf1 = xgb.XGBClassifier(n_estimators=40, learning_rate=0.2, max_depth=2, seed=2016)
 
-for train_index, test_index in skf:
-    X_train, X_test = my_data.iloc[train_index], my_data.iloc[test_index]
-    y_train, y_test = y.iloc[train_index], y.iloc[test_index]
+# CV
+skf = StratifiedKFold(y, n_folds=5, random_state=2016)
 
-
-
-model = LogisticRegression(class_weight='balanced', C=10, solver='lbfgs')
-#model = LogisticRegression()
-
-model.fit(X_train, y_train)
-
-y_pred = model.predict(X_test)
-
-get_metric(y_test, y_pred, plot=False)
-
-get_roc_curve_cv(model, my_data, y)
-
-result = pd.DataFrame(y_test)
-result.columns = ["y_test"]
-result["y_pred"] = y_pred
-
-
-
-# To fit model with all feature one by one and check CV score :
-#from sklearn.cross_validation import cross_val_score
-#score_features = []
-#for feature in features:
-#    temp_data = data_save[feature].copy()
-#    temp_data = pd.get_dummies(temp_data)
-#    
-#    score = cross_val_score(model, temp_data, y=y, scoring='roc_auc', cv=5)
-#    score_features.append({'col' : feature,
-#                        'score': score.mean()})
-#                        
-#df_features = pd.DataFrame(score_features)    
-#df_features.sort_values('score', ascending=0, inplace=True)                
-#sns.barplot(x='col', y='score', data=df_features)
-#plt.xticks(range(len(df_features.col)), df_features.col, rotation=75)
-
-
-# Feature selection
-#from sklearn.feature_selection import RFECV
-#rfecv = RFECV(estimator=model, step=1, cv=5,
-#              scoring='roc_auc')
-#rfecv.fit(my_data, y)
-#plt.figure()
-#plt.xlabel("Number of features selected")
-#plt.ylabel("Cross validation score (nb of correct classifications)")
-#plt.plot(range(1, len(rfecv.grid_scores_) + 1), rfecv.grid_scores_)
-#plt.show()
-#
-#selected_features = my_data.columns[rfecv.get_support()]
-
-# Ensemble
-import xgboost as xgb
-from mlxtend.classifier import EnsembleVoteClassifier
-from sklearn.cross_validation import cross_val_score
-
-clf1 = LogisticRegression(class_weight='balanced', solver='newton-cg', C=100.0)
-clf2 = xgb.XGBClassifier(learning_rate=0.1, n_estimators=7, max_depth=8)
-clf3 = xgb.XGBClassifier(learning_rate=0.1, n_estimators=10, max_depth=6)
-
-eclf = EnsembleVoteClassifier(clfs=[clf1, clf2], voting='soft')
-
-for clf, label in zip([clf1, clf2, clf3, eclf], ['Logistic Newton', 'Xgb1', 'Xgb2', 'Ensemble']):
-
-    scores = cross_val_score(clf, my_data[selected_features], y, cv=5, scoring='roc_auc')
-    print("roc_auc: %0.4f (+/- %0.2f) [%s]" % (scores.mean(), scores.std(), label))
-# Result  : ensemble roc_auc: 0.7251 (+/- 0.04)
+# Evaluation model
+score = cross_val_score(clf1, my_data[selected_features], y, cv=skf, scoring='roc_auc')
+CV_mean = round(np.abs(score.mean()), 3)
+CV_std = round(score.std(), 3)
+print "Mean : " + str(CV_mean) + " +/- " + str(CV_std)
+# Result  : ensemble roc_auc: 0.729 (+/- 0.046)
