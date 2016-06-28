@@ -12,5 +12,6 @@ On peux interprèter cette valeur comme la probabilité de classer un exemple po
 
 Résultat du modèle sur une cross-validation à 5 fold est de 0.729 AUC +/- 0.046 (screen-shot)
 
+![Image Evaluation model](https://cloud.githubusercontent.com/assets/8374843/16419159/00947074-3d4d-11e6-8066-a6e1ae73ff74.png)
 
 On est arrivé à plus de 0.75 AUC en combinant plusieurs modèles et features, mais celà mène à une complexité non négligeable par la suite.
